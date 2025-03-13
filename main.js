@@ -78,6 +78,25 @@ async function translate(text, from, to, options) {
         let result = '';
         let buffer = '';  // 用于存储跨块的不完整消息
 
+        const processLines = (lines) => {
+            for (const line of lines) {
+                if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        if (data.choices && data.choices.length > 0) {
+                            const { delta } = data.choices[0];
+                            if (delta && delta.content) {
+                                result += delta.content;
+                                setResult(result);
+                            }
+                        }
+                    } catch (e) {
+                        console.error('解析JSON失败:', e, line);
+                    }
+                }
+            }
+        }
+
         try {
             while (true) {
                 const { done, value } = await reader.read();
@@ -97,44 +116,13 @@ async function translate(text, from, to, options) {
                 // 保留最后一个可能不完整的部分
                 buffer = lines.pop() || '';
 
-                for (const line of lines) {
-                    if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                        try {
-                            const data = JSON.parse(line.slice(6));
-                            if (data.choices && data.choices.length > 0) {
-                                const { delta } = data.choices[0];
-                                if (delta && delta.content) {
-                                    result += delta.content;
-                                    setResult(result);
-                                }
-                            }
-                        } catch (e) {
-                            // 忽略无法解析的行
-                            console.log(e);
-                        }
-                    }
-                }
+                processLines(lines);
             }
 
             // 处理buffer中剩余的任何数据
             if (buffer) {
                 const lines = buffer.split('\n\n');
-                for (const line of lines) {
-                    if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                        try {
-                            const data = JSON.parse(line.slice(6));
-                            if (data.choices && data.choices.length > 0) {
-                                const { delta } = data.choices[0];
-                                if (delta && delta.content) {
-                                    result += delta.content;
-                                    setResult(result);
-                                }
-                            }
-                        } catch (e) {
-                            console.error('处理剩余数据时出错:', e);
-                        }
-                    }
-                }
+                processLines(lines);
             }
 
             return result;

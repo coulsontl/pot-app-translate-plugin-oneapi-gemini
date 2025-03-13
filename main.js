@@ -45,7 +45,6 @@ async function translate(text, from, to, options) {
         stream: useStream,
         temperature: 0.1,
         top_p: 0.99,
-        max_tokens: 4096,
         ...args
     }
     // return JSON.stringify(body);
@@ -77,14 +76,26 @@ async function translate(text, from, to, options) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let result = '';
+        let buffer = '';  // 用于存储跨块的不完整消息
 
         try {
             while (true) {
                 const { done, value } = await reader.read();
-                if (done) break;
+                if (done) {
+                    // 确保处理完所有剩余数据
+                    const remainingText = decoder.decode();
+                    if (remainingText) buffer += remainingText;
+                    break;
+                }
 
+                // 解码当前块并追加到缓冲区
                 const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n\n');
+                buffer += chunk;
+
+                // 尝试处理完整的消息
+                const lines = buffer.split('\n\n');
+                // 保留最后一个可能不完整的部分
+                buffer = lines.pop() || '';
 
                 for (const line of lines) {
                     if (line.startsWith('data: ') && line !== 'data: [DONE]') {
@@ -105,9 +116,30 @@ async function translate(text, from, to, options) {
                 }
             }
 
+            // 处理buffer中剩余的任何数据
+            if (buffer) {
+                const lines = buffer.split('\n\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.choices && data.choices.length > 0) {
+                                const { delta } = data.choices[0];
+                                if (delta && delta.content) {
+                                    result += delta.content;
+                                    setResult(result);
+                                }
+                            }
+                        } catch (e) {
+                            console.error('处理剩余数据时出错:', e);
+                        }
+                    }
+                }
+            }
+
             return result;
         } catch (error) {
-            throw `流式响应处理错误: ${error.message}`;
+            throw `Streaming response processing error: ${error.message}`;
         }
     } else {
         throw new Error(`Http Request Error\nHttp Status: ${res.status}\n${JSON.stringify(res.data)}`);
